@@ -1143,11 +1143,22 @@
       div.appendChild(row);
     }
 
+    // TROJANISCHER PFERD (nach einem Kampfsieg, bevor der Schatz gezogen
+    // wird) - Passen sendet dasselbe generische passReaction wie beim
+    // Kleberfläschchen-Fenster.
+    if (c.trojanerOffer && c.trojanerOffer.includes(myInfo.playerId)) {
+      const row = document.createElement('div');
+      row.className = 'row gap wrap';
+      row.appendChild(textNode(`${actor.name} hat gewonnen und will einen Schatz ziehen - du darfst noch ein "TROJANISCHES PFERD" spielen.`));
+      row.appendChild(mkBtn('Passen', () => socket.emit('passReaction', {})));
+      div.appendChild(row);
+    }
+
     // Jede:r am Tisch darf hier eingreifen - nicht nur Angreifer:in/Helfer:in -
     // um z.B. einen Fluch oder eine Hilfskarte zu verrechnen, die nicht
     // automatisch erkannt wird (Monster-Verstärkerkarten mit festem Bonus
     // rechnen sich weiter unten automatisch ein, siehe "Im Kampf spielen").
-    if (!c.mustFlee) {
+    if (!c.mustFlee && !c.trojanerOffer && !c.trojanerDone) {
       const modRow = document.createElement('div');
       modRow.className = 'row gap wrap';
       modRow.innerHTML = `
@@ -1195,7 +1206,7 @@
     const actions = document.createElement('div');
     actions.className = 'row gap wrap';
 
-    if (iAmActor && !c.mustFlee) {
+    if (iAmActor && !c.mustFlee && !c.trojanerOffer && !c.trojanerDone) {
       const evalBtn = document.createElement('button');
       evalBtn.className = 'primary'; evalBtn.textContent = 'Kampf auswerten';
       evalBtn.disabled = !c.allReady;
@@ -1904,14 +1915,14 @@
     // Monster-Verstärkerkarten ("+X für das Monster") darf jede:r am Tisch
     // jederzeit während eines laufenden Kampfes ausspielen, nicht nur die
     // kämpfende Person - der Bonus/Malus wird automatisch verrechnet.
-    if (state.combat && !state.combat.mustFlee && isMonsterEnhancer(c)) {
+    if (state.combat && !state.combat.mustFlee && !state.combat.trojanerOffer && !state.combat.trojanerDone && isMonsterEnhancer(c)) {
       const sign = c.bonus > 0 ? '+' : '';
       const btn = mkBtn(`⚔️ Im Kampf spielen (${sign}${c.bonus} Monster)`, () => socket.emit('playCombatCard', { cardId: id }));
       wrap.appendChild(btn);
     }
     // "Kampf-Tränke": Schatzkarten mit einem +N-Bonus für eine wählbare
     // Seite, jederzeit während eines laufenden Kampfes spielbar.
-    if (state.combat && !state.combat.mustFlee && !state.pendingCardAction && isCombatPotion(c)) {
+    if (state.combat && !state.combat.mustFlee && !state.combat.trojanerOffer && !state.combat.trojanerDone && !state.pendingCardAction && isCombatPotion(c)) {
       // GEMEINE GHOULE: fuer die Kaempfenden ist ein Munchkin-Bonus wirkungslos,
       // der Server weist die Karte ab. Welche Seite eine Karte genau bedient,
       // weiss nur er - deshalb hier nur ein Hinweis am Knopf statt einer
@@ -1936,13 +1947,13 @@
     }
     // Türkarten mit eigener Kampfwirkung (MAHLZEIT!) - welche das sind, sagt
     // der Server (state.doorCombatCards), damit hier keine Namensliste liegt.
-    if (state.combat && !state.combat.mustFlee && (state.doorCombatCards || []).includes(c.name)) {
+    if (state.combat && !state.combat.mustFlee && !state.combat.trojanerOffer && !state.combat.trojanerDone && (state.doorCombatCards || []).includes(c.name)) {
       const btn = mkBtn('⚔️ Im Kampf spielen', () => socket.emit('playCombatCard', { cardId: id }));
       wrap.appendChild(btn);
     }
     // Kampfreaktionskarten (Kumpel, Wanderndes Monster, Illusion, Hilf mir,
     // Ueberfalltrank) - welche das sind, sagt der Server (state.combatReactionCards).
-    if (state.combat && !state.combat.mustFlee && !state.pendingCardAction && (state.combatReactionCards || []).includes(c.name)) {
+    if (state.combat && !state.combat.mustFlee && !state.combat.trojanerOffer && !state.combat.trojanerDone && !state.pendingCardAction && (state.combatReactionCards || []).includes(c.name)) {
       // Zwei Bedingungen, die der Server kennt und der Client nur abfragt:
       // HILF MIR darf nur spielen, wer selbst im Kampf steht
       // (combatReactionOnlyInFight), und WANDERNDES MONSTER/ILLUSION brauchen
@@ -2039,6 +2050,15 @@
     // diese Person offen ist (combat.escapeReactionOffer).
     if (state.combat && (state.combat.escapeReactionOffer || []).includes(myInfo.playerId) && c.name === 'KLEBERFLÄSCHCHEN') {
       const btn = mkBtn('🧪 Kleberfläschchen: Flucht wiederholen lassen', () => socket.emit('playReactionCard', { cardId: id }));
+      btn.className = 'primary';
+      wrap.appendChild(btn);
+    }
+    // TROJANISCHER PFERD: nur cardId senden - die Monsterwahl (falls
+    // vorhanden) kommt danach automatisch über den generischen
+    // pendingCardAction-Dialog (renderCardAction()), genau wie bei
+    // WANDERNDES MONSTER/ILLUSION.
+    if (state.combat && (state.combat.trojanerOffer || []).includes(myInfo.playerId) && c.name === 'TROJANISCHER PFERD') {
+      const btn = mkBtn('🐴 Trojanisches Pferd spielen', () => socket.emit('playTrojaner', { cardId: id }));
       btn.className = 'primary';
       wrap.appendChild(btn);
     }

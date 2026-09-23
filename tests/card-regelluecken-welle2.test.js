@@ -177,7 +177,10 @@ const fertig = () => raeume.forEach((r) => { if (r.cleanupTimer) clearTimeout(r.
 }
 
 // --- GUMMI-GOLEM: "Du musst in jedem Kampf deine Hilfe anbieten, darfst
-// keinen Schatz annehmen, bis du einen verlierst."
+// keinen Schatz annehmen, bis du einen verlierst." Nutzerentscheidung
+// 2026-09-23: "einen verlierst" bezieht sich auf einen KAMPF, nicht auf eine
+// Schatzkarte - die Sperre endet ueber beendeFluchtphase (server.js), nicht
+// beim Lesen einer geschrumpften Hand.
 {
   const golem = findCard('GUMMI-GOLEM', 'monster');
   const schatz = findCard('FLAMMENDER GIFTTRANK').id;
@@ -186,18 +189,55 @@ const fertig = () => raeume.forEach((r) => { if (r.cleanupTimer) clearTimeout(r.
   S.addActiveCurse(room, p, 'GUMMI-GOLEM', golem.id);
   const eintrag = p.activeCurses.find((f) => f.kind === 'zuckerschock');
   assert.ok(eintrag, 'Zuckerschock ist eingetragen');
-  assert.strictEqual(eintrag.schatzStand, 1, 'der Schatzstand beim Eintragen ist festgehalten');
+  assert.ok(eintrag.hinweis && /Hilfe anbieten/.test(eintrag.hinweis), 'Hinweistext nennt die Hilfe-Pflicht');
   assert.ok(S.hatSchatzSperre(p), 'kein Schatz, solange der Fluch laeuft');
   assert.deepStrictEqual(S.zieheSchaetzeFuer(room, p, 2), [], 'es wird kein Schatz gezogen');
 
-  // Ende: eine Schatzkarte verlieren.
+  // Verlorene Schatzkarte allein beendet die Sperre NICHT (anders als in
+  // einer frueheren Fassung dieser Datei).
   p.hand = [];
-  assert.ok(!S.hatSchatzSperre(p), 'nach dem Verlust endet die Sperre');
+  assert.ok(S.hatSchatzSperre(p), 'Schatzverlust allein beendet die Sperre nicht');
+  assert.ok(p.activeCurses.some((f) => f.kind === 'zuckerschock'), 'der Fluch steht noch');
+
+  // Ende: ein verlorener Kampf (fehlgeschlagene Flucht).
+  const goblin = findCard('LAHMER GOBLIN', 'monster');
+  const c = { actorId: 'p1', monsterIds: [goblin.id], helperId: null, enhancers: [], fleeFailed: ['p1'], mustFlee: false };
+  room.combat = c;
+  S.beendeFluchtphase(room, c);
+  assert.ok(!S.hatSchatzSperre(p), 'nach dem Kampfverlust endet die Sperre');
   assert.ok(!p.activeCurses.some((f) => f.kind === 'zuckerschock'), 'der Fluch ist beendet');
 }
-// Hilfe anbieten: Logzeile bei Kampfbeginn, und die Zusage kann nicht
-// abgelehnt werden ("Keiner muss deine Hilfe annehmen, aber du musst sie
-// anbieten").
+// Ein gewonnener Kampf beendet den Fluch NICHT.
+{
+  const golem = findCard('GUMMI-GOLEM', 'monster');
+  const goblin = findCard('LAHMER GOBLIN', 'monster');
+  const p = makePlayer();
+  const room = makeRoom([p]);
+  S.addActiveCurse(room, p, 'GUMMI-GOLEM', golem.id);
+  S.startCombat(room, 'p1', [goblin.id], { fromHand: false });
+  S.resolveCombatWin(room);
+  assert.ok(p.activeCurses.some((f) => f.kind === 'zuckerschock'), 'ein gewonnener Kampf laesst den Fluch stehen');
+}
+// Verliert die Person GENAU gegen einen zweiten Gummi-Golem, ersetzt der neue
+// Fluch den alten (nicht: der neue loescht sich selbst wieder). Pin fuer die
+// Reihenfolge in beendeFluchtphase - die Loeschung muss VOR
+// oeffneVerlustKonsequenz laufen, sonst wuerde dieser Test bei vertauschter
+// Reihenfolge trotzdem gruen bleiben (der urspruengliche Fluch bliebe einfach
+// stehen), obwohl der Bug (frischer Fluch loescht sich selbst) real waere.
+{
+  const golem = findCard('GUMMI-GOLEM', 'monster');
+  const p = makePlayer();
+  const room = makeRoom([p]);
+  S.addActiveCurse(room, p, 'GUMMI-GOLEM', golem.id); // alter Fluch, z.B. aus einer frueheren Begegnung
+  const c = { actorId: 'p1', monsterIds: [golem.id], helperId: null, enhancers: [], fleeFailed: ['p1'], mustFlee: false };
+  room.combat = c;
+  S.beendeFluchtphase(room, c);
+  assert.ok(p.activeCurses.some((f) => f.kind === 'zuckerschock'), 'der neue Zuckerschock aus DIESEM verlorenen Kampf steht noch');
+}
+// Hilfe anbieten: Logzeile bei Kampfbeginn, Trust-Prinzip - die um Hilfe
+// gebetene Person unter Zuckerschock darf trotzdem ablehnen ("Keiner muss
+// deine Hilfe annehmen, aber du musst sie anbieten" beschreibt nur die
+// EIGENE Pflicht anzubieten, nicht die Pflicht anderer, immer zu helfen).
 {
   const golem = findCard('GUMMI-GOLEM', 'monster');
   const monster = findCard('LAHMER GOBLIN', 'monster');
@@ -208,8 +248,8 @@ const fertig = () => raeume.forEach((r) => { if (r.cleanupTimer) clearTimeout(r.
   S.startCombat(room, 'p1', [monster.id], { fromHand: false });
   assert.ok(room.logs.some((l) => /Zuckerschock/i.test(l.text) && /Hilfe/i.test(l.text)), 'das Angebot steht im Verlauf');
   S.handleRequestHelp(room, 'p1', 'p2', 0);
-  S.handleRespondHelp(room, 'p2', false); // Ablehnen versucht
-  assert.strictEqual(room.combat.helperId, 'p2', 'wer im Zuckerschock ist, darf nicht ablehnen');
+  S.handleRespondHelp(room, 'p2', false); // Ablehnen
+  assert.strictEqual(room.combat.helperId, null, 'wer im Zuckerschock ist, darf trotzdem ablehnen (Trust-Prinzip)');
 }
 
 // --- RIESENKAKERLAKE "+5 gegen Elfen oder Menschen": ein Halb-Blut-Elf hat
@@ -314,20 +354,19 @@ const fertig = () => raeume.forEach((r) => { if (r.cleanupTimer) clearTimeout(r.
   assert.ok(!room.logs.some((l) => /Dryade schwaecht/i.test(l.text)), 'kein Log-Eintrag ueber verlorene Klasse');
 }
 
-// --- Review-Fund 3: publicPlayer normalisiert STINKTIER (stinktierStrafeAktiv)
-// beim Lesen, aber nicht GUMMI-GOLEMs Zuckerschock - dadurch blieb ein
-// abgelaufener Fluch im Client/WUNSCHRING sichtbar.
+// --- Review-Fund 3 (ueberholt seit der Kampfverlust-Ueberarbeitung 2026-09-23):
+// GUMMI-GOLEMs Zuckerschock endet jetzt event-getrieben in beendeFluchtphase
+// (clearActiveCurseByKind), nicht mehr beim Lesen einer geschrumpften Hand -
+// es gibt also keinen "beim Lesen abgelaufen"-Zustand mehr zu pruefen. Statt
+// dessen: publicState zeigt einen noch laufenden Zuckerschock korrekt an.
 {
   const golem = findCard('GUMMI-GOLEM', 'monster');
-  const schatz = findCard('FLAMMENDER GIFTTRANK').id;
-  const p = makePlayer({ hand: [schatz] });
+  const p = makePlayer();
   const room = makeRoom([p]);
   S.addActiveCurse(room, p, 'GUMMI-GOLEM', golem.id);
-  assert.ok(p.activeCurses.some((f) => f.kind === 'zuckerschock'), 'Testvoraussetzung: Fluch eingetragen');
-  p.hand = []; // Schatz verloren - der Fluch ist ab jetzt beim Lesen vorbei.
   const state = S.publicState(room);
-  assert.ok(!state.players[0].activeCurses.some((f) => f.kind === 'zuckerschock'),
-    'publicState zeigt den abgelaufenen Zuckerschock nicht mehr an');
+  assert.ok(state.players[0].activeCurses.some((f) => f.kind === 'zuckerschock'),
+    'publicState zeigt den laufenden Zuckerschock an');
 }
 
 fertig();

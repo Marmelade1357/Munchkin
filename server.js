@@ -567,8 +567,6 @@ function publicPlayer(room, p) {
   // keine abgelaufene Strafe mehr an, und der WUNSCHRING, der die Rohliste
   // liest, kann nicht mehr an sie verschwendet werden.
   stinktierStrafeAktiv(p);
-  // GUMMI-GOLEM: derselbe Grund - Zuckerschock endet beim Lesen (zuckerschockAktiv).
-  zuckerschockAktiv(p);
   return {
     id: p.id,
     name: p.name,
@@ -2957,7 +2955,7 @@ function handleResolveCardChoice(room, playerId, optionId) {
     touchRoom(room);
     return;
   }
-  const COMBAT_ACTION_TYPES = new Set(['modifier', 'endCombatNoLevel', 'removeHelper', 'killMonsterInCombat', 'removeOneMonster', 'doubleStrength', 'combatAddMonster', 'combatReplaceMonster', 'treatMonsterAsLevel1', 'tripleItemBonus', 'forceSelfAsHelper', 'schatzUmtauschAnmelden', 'zeroMonsterTreasure', 'duplicateMonsterMommy', 'freundlichFightOn', 'juckpulverDiscard', 'verstaerkerAufMonster']);
+  const COMBAT_ACTION_TYPES = new Set(['modifier', 'endCombatNoLevel', 'removeHelper', 'killMonsterInCombat', 'removeOneMonster', 'doubleStrength', 'combatAddMonster', 'combatReplaceMonster', 'treatMonsterAsLevel1', 'tripleItemBonus', 'forceSelfAsHelper', 'schatzUmtauschAnmelden', 'zeroMonsterTreasure', 'duplicateMonsterMommy', 'freundlichFightOn', 'juckpulverDiscard', 'verstaerkerAufMonster', 'trojanerOhneMonster', 'trojanerMitMonster']);
   const sourceCard = pa.sourceCardId ? card(pa.sourceCardId) : null;
   const desc = COMBAT_ACTION_TYPES.has(action.type)
     ? applyCombatPotionAction(room, player, action, sourceCard)
@@ -3290,10 +3288,6 @@ function applyLingeringRule(room, player, cardName, cardId, regel) {
   }
   player.activeCurses.push({
     cardId, name: cardName, kind: regel.kind, amount, dauer: regel.dauer,
-    // GUMMI-GOLEM: "bis du einen verlierst" - der Stand beim Eintragen ist der
-    // Vergleichswert (siehe zuckerschockAktiv). besesseneSchaetze ist weiter
-    // unten definiert (Funktionsdeklaration, daher hier schon nutzbar).
-    schatzStand: regel.kind === 'zuckerschock' ? besesseneSchaetze(player).length : undefined,
     // Klartext fuer die Anzeige - steht bei der Regel selbst (src/cards/
     // reactions.js), damit der Client die Wirkung nicht nachbauen muss.
     hinweis: regel.hinweis || '',
@@ -3420,26 +3414,7 @@ function hatUntotenAngst(player) {
 // dadurch nicht schrumpfen.
 function hatSchatzSperre(player) {
   return !!player
-    && ((player.activeCurses || []).some((f) => f.kind === 'noTreasure') || zuckerschockAktiv(player));
-}
-
-// Alle Schatzkarten im Besitz: Hand und Angelegtes.
-function besesseneSchaetze(player) {
-  return [...player.hand, ...equippedItemIds(player)].filter((id) => (card(id) || {}).type === 'treasure');
-}
-
-// GUMMI-GOLEM: die Sperre endet, sobald die Person eine Schatzkarte verliert -
-// gemessen am Stand beim Eintragen. Geprueft beim LESEN (wie
-// stinktierStrafeAktiv), damit kein Verlustweg vergessen werden kann: ablegen,
-// verkaufen, gestohlen, verflucht, gehandelt zaehlen alle gleich.
-function zuckerschockAktiv(player) {
-  const eintrag = (player && player.activeCurses || []).find((f) => f.kind === 'zuckerschock');
-  if (!eintrag) return false;
-  if (besesseneSchaetze(player).length < (eintrag.schatzStand || 0)) {
-    player.activeCurses = player.activeCurses.filter((f) => f !== eintrag);
-    return false;
-  }
-  return true;
+    && (player.activeCurses || []).some((f) => f.kind === 'noTreasure' || f.kind === 'zuckerschock');
 }
 
 // Fuer jeden Weg, auf dem eine Karte OHNE drawTreasure() in eine Hand
@@ -3911,40 +3886,35 @@ function handlePlayReactionCard(room, playerId, cardId, value) {
   }
 }
 
-// TROJANISCHER PFERD: Spieler spielt die Karte (optional mit einem Monster
-// aus der Hand). monsterId ist null (nur Schatz wegnehmen) oder die ID eines
-// Handmonsters (neuer Kampf gegen dieses Monster).
-function handlePlayTrojaner(room, playerId, cardId, monsterId) {
+// TROJANISCHER PFERD: "Spiele diese Karte zusammen mit einem Monster aus
+// deiner Hand aus, wenn jemand gerade nach dem Kampf einen Schatz ziehen
+// will ... (Oder spiele diese Karte ohne Monster, um einfach den Schatz
+// wegzunehmen.)" Die Monsterwahl laeuft ueber den vorhandenen
+// openCardChoice-Dialog (Vorbild: WANDERNDES MONSTER/ILLUSION,
+// regel.kind === 'addMonsterFromHand' weiter unten in dieser Datei) - der
+// Client zeigt die Wahl bereits generisch ueber renderCardAction(), keine
+// neue Client-UI noetig.
+function handlePlayTrojaner(room, playerId, cardId) {
   const combat = room.combat;
   if (!combat || !combat.trojanerOffer || !combat.trojanerOffer.includes(playerId)) return;
   const p = findPlayer(room, playerId);
   const c = card(cardId);
   if (!p || !c || !p.hand.includes(cardId) || !TREASURE_REACTION_CARDS.has(c.name)) return;
-  const actor = findPlayer(room, combat.actorId);
   removeFromHand(p, cardId);
   discardCard(room, cardId);
   combat.trojanerOffer = null;
   combat.trojanerDone = true;
-  if (monsterId && p.hand.includes(monsterId)) {
-    const m = card(monsterId);
-    if (m && m.category === 'door_monster') {
-      removeFromHand(p, monsterId);
-      // Kampf gewonnen, aber Schätze gestrichen → Monster ablegen, Level geben,
-      // dann neuen Kampf starten gegen das Trojaner-Monster.
-      // Levels und Sieg-Check laufen in finishCombatWin; der Schatz wird aber
-      // NICHT gezogen, weil wir trojanerNoTreasure setzen.
-      combat.trojanerNoTreasure = true;
-      combat.trojanerMonsterId = monsterId;
-      combat.trojanerPlayerId = p.id;
-      log(room, `${p.name} spielt "${c.name}" mit "${m.name}": ${actor.name} bekommt keinen Schatz und muss stattdessen gegen "${m.name}" kämpfen!`, [cardId, monsterId]);
-      finishCombatWin(room);
-      return;
-    }
-  }
-  // Ohne Monster: einfach keinen Schatz
-  combat.trojanerNoTreasure = true;
-  log(room, `${p.name} spielt "${c.name}": ${actor.name} bekommt keinen Schatz!`, [cardId]);
-  finishCombatWin(room);
+  const eigeneMonster = p.hand.filter((id) => (card(id) || {}).category === 'monster');
+  const options = [
+    { id: 'ohne', label: 'Ohne Monster: nur den Schatz wegnehmen', action: { type: 'trojanerOhneMonster' } },
+  ].concat(eigeneMonster.map((id) => ({
+    id: `mon-${id}`,
+    label: `Mit "${card(id).name}": neuer Kampf gegen dieses Monster`,
+    action: { type: 'trojanerMitMonster', cardId: id },
+  })));
+  openCardChoice(room, p, 'TROJANISCHER PFERD', options);
+  log(room, `${p.name} spielt "${c.name}" - der Kampf um den Schatz geht weiter.`);
+  touchRoom(room);
 }
 
 // Eine Person faellt weg (Verbindung verloren): sie kann auf nichts mehr
@@ -3962,6 +3932,14 @@ function loeseReaktionsfensterOhne(room, playerId) {
       const actor = findPlayer(room, c.actorId);
       c.escapeReactionOffer = null;
       finishFleeSuccess(room, actor, c);
+    }
+  }
+  if (c && c.trojanerOffer && c.trojanerOffer.includes(playerId)) {
+    c.trojanerOffer = c.trojanerOffer.filter((id) => id !== playerId);
+    if (!c.trojanerOffer.length) {
+      c.trojanerOffer = null;
+      c.trojanerDone = true;
+      finishCombatWin(room);
     }
   }
 }
@@ -3982,6 +3960,16 @@ function handlePassReaction(room, playerId) {
       const actor = findPlayer(room, combat.actorId);
       combat.escapeReactionOffer = null;
       finishFleeSuccess(room, actor, combat);
+    }
+    touchRoom(room);
+  }
+  const trojaner = combat && combat.trojanerOffer;
+  if (trojaner && trojaner.includes(playerId)) {
+    combat.trojanerOffer = trojaner.filter((id) => id !== playerId);
+    if (!combat.trojanerOffer.length) {
+      combat.trojanerOffer = null;
+      combat.trojanerDone = true;
+      finishCombatWin(room);
     }
     touchRoom(room);
   }
@@ -4165,6 +4153,10 @@ function handleEnchantMonster(room, playerId) {
 function handleUseClassCombatDiscard(room, playerId, cardId) {
   if (!room.combat) return;
   const c = room.combat;
+  // TROJANISCHER PFERD: der Kampf ist bereits entschieden, solange das
+  // Reaktionsfenster offen ist oder gerade aufgeloest wird - keine weiteren
+  // Eingriffe in einen Kampf, der schon vorbei ist.
+  if (c.trojanerOffer || c.trojanerDone) return;
   const player = findPlayer(room, playerId);
   if (!player || !player.hand.includes(cardId)) return;
   // Nur wer wirklich im Kampf steht - Zuschauer:innen dürfen nicht abwerfen.
@@ -4458,12 +4450,13 @@ function startCombat(room, actorId, monsterIds, opts) {
   };
   zaubercouchFragen(findPlayer(room, actorId));
   dryadeWirkung(room, findPlayer(room, actorId));
-  // GUMMI-GOLEM: "Du musst in jedem Kampf deine Hilfe anbieten." Der Server
-  // meldet das Angebot an - annehmen muss es niemand (siehe Karte), deshalb
-  // nur eine Logzeile und keine Anfrage.
+  // GUMMI-GOLEM: "Du musst in jedem Kampf deine Hilfe anbieten." Trust-Prinzip
+  // (2026-09-23 vom Nutzer bestaetigt): der Server kann niemanden zwingen,
+  // eine angebotene Hilfe anzunehmen, deshalb nur eine Logzeile und keine
+  // erzwungene Anfrage.
   const kaempfer = findPlayer(room, actorId);
   room.players.forEach((p) => {
-    if (p.id !== actorId && zuckerschockAktiv(p)) {
+    if (p.id !== actorId && (p.activeCurses || []).some((f) => f.kind === 'zuckerschock')) {
       log(room, `${p.name} steht unter Zuckerschock und bietet ${kaempfer ? kaempfer.name : 'der kämpfenden Person'} seine Hilfe an.`);
     }
   });
@@ -5047,6 +5040,26 @@ function applyCombatPotionAction(room, player, action, sourceCard) {
       refreshCombatReady(room);
       return `"${card(alt).name}" wird durch "${card(action.cardId).name}" ersetzt`;
     }
+    // TROJANISCHER PFERD ohne Monster: nur der Schatz entfaellt, der Kampf
+    // bleibt beim urspruenglichen Sieg.
+    case 'trojanerOhneMonster': {
+      c.trojanerNoTreasure = true;
+      finishCombatWin(room);
+      return 'kein Schatz';
+    }
+    // TROJANISCHER PFERD mit Monster: kein Schatz, stattdessen ein neuer
+    // Kampf gegen genau dieses Monster. aktorId wird VOR finishCombatWin
+    // gelesen, weil die Funktion room.combat auf null setzt - c selbst
+    // bleibt als Referenz auf das alte (jetzt losgeloeste) Objekt gueltig.
+    case 'trojanerMitMonster': {
+      removeFromHand(player, action.cardId);
+      const monsterName = card(action.cardId).name;
+      const aktorId = c.actorId;
+      c.trojanerNoTreasure = true;
+      finishCombatWin(room);
+      if (!room.winner) startCombat(room, aktorId, [action.cardId], { fromHand: true });
+      return `kein Schatz - neuer Kampf gegen "${monsterName}"`;
+    }
     // Monster-Verstaerker: erst hier weiss der Server, welches Monster
     // gemeint war (bei nur einem Monster im Kampf sofort, sonst nach der
     // Zielwahl in handlePlayCombatCard).
@@ -5081,6 +5094,10 @@ function handleSetCombatModifier(room, playerId, who, value) {
   if (!room.combat) return;
   const c = room.combat;
   if (c.mustFlee) return;
+  // TROJANISCHER PFERD: siehe handlePlayCombatCard - der Kampf ist bereits
+  // entschieden, solange das Reaktionsfenster offen ist oder gerade
+  // aufgeloest wird.
+  if (c.trojanerOffer || c.trojanerDone) return;
   const player = findPlayer(room, playerId);
   if (!player) return;
   // Jede:r am Tisch darf hier eingreifen (Karteneffekte, die das Monster
@@ -5160,6 +5177,11 @@ function announceCardPower(room, player, cardId) {
 
 function handlePlayCombatCard(room, playerId, cardId) {
   if (!room.combat || room.combat.mustFlee) return;
+  // TROJANISCHER PFERD: der Kampf ist bereits entschieden, solange das
+  // Reaktionsfenster offen ist oder gerade aufgeloest wird - sonst liesse
+  // sich z.B. ueber WANDERNDES MONSTER noch ein zusaetzliches Monster (und
+  // damit Stufen/Schaetze) in einen schon gewonnenen Kampf nachschieben.
+  if (room.combat.trojanerOffer || room.combat.trojanerDone) return;
   const player = findPlayer(room, playerId);
   if (!player || !player.hand.includes(cardId)) return;
   // EINSTWEILIGE VERFÜGUNG: wer gesperrt ist, darf in diesen Kampf nicht
@@ -5499,6 +5521,8 @@ function hilfeVerbotenGrund(room, actor, targetId) {
 function handleRequestHelp(room, playerId, targetId, reward) {
   if (!room.combat) return;
   const c = room.combat;
+  // TROJANISCHER PFERD: siehe handlePlayCombatCard.
+  if (c.trojanerOffer || c.trojanerDone) return;
   if (c.actorId !== playerId || c.helperId) return;
   const actor = findPlayer(room, playerId);
   const target = findPlayer(room, targetId);
@@ -5536,12 +5560,6 @@ function handleRespondHelp(room, playerId, accept) {
   const compelled = !!c.helperPending.compelled;
   if (!accept && compelled) {
     log(room, `${target.name} darf nicht ablehnen (Knieschützer der Verlockung).`);
-    accept = true;
-  }
-  // GUMMI-GOLEM: "Du musst in jedem Kampf deine Hilfe anbieten" - wer im
-  // Zuckerschock steckt, kann eine Anfrage nicht ausschlagen.
-  if (!accept && zuckerschockAktiv(target)) {
-    log(room, `${target.name} steht unter Zuckerschock und muss helfen.`);
     accept = true;
   }
   if (accept) {
@@ -5650,6 +5668,11 @@ function haseAnwenden(room, c, hase, wurf) {
 
 function handleEvaluateCombat(room, playerId) {
   if (!room.combat) return;
+  // TROJANISCHES PFERD: sobald das Reaktionsfenster gezeigt wurde (oder
+  // schon aufgeloest ist), gilt dieser Kampf als abgeschlossen - ein
+  // zweites "Kampf auswerten" wuerde den Sieg nochmal auswerten und die
+  // Trojaner-Karte/das Monster der spielenden Person umsonst verbrauchen.
+  if (room.combat.trojanerOffer || room.combat.trojanerDone) return;
   // Waehrend eines offenen Wurf-Fensters (Hase, Halbfinal-Schlag) nicht
   // auswerten: der Wurf gehoert noch zu diesem Kampf, sein Callback wuerde
   // sonst in einen bereits beendeten Kampf hineinschreiben.
@@ -5855,7 +5878,12 @@ function finishCombatWin(room) {
   const sollZiehen = actorGesperrt
     ? (helferKannZiehen ? Math.min(treasureCount, c.helperReward || 0) : 0)
     : treasureCount;
-  const drawn = ziehendFuer ? zieheSchaetzeFuer(room, ziehendFuer, sollZiehen) : [];
+  // TROJANISCHER PFERD: "Die Person erhaelt keinen Schatz." Betrifft die
+  // GESAMTE Kampfbeute (auch eine zugesagte Helfer:in-Quote, da fuerHelfer
+  // ein Ausschnitt von drawn ist) - nicht nur den Anteil der kaempfenden
+  // Person. PINATA (eigener, additiver Ziehweg oben in dieser Funktion)
+  // bleibt unberuehrt, ponytail: seltener Kombinationsfall.
+  const drawn = (ziehendFuer && !c.trojanerNoTreasure) ? zieheSchaetzeFuer(room, ziehendFuer, sollZiehen) : [];
   // einfache Aufteilung: alles an actor, außer helper wurde per Vorabsprache
   // (README) etwas zugesagt - hier immer erst alles an die/den Angreifer:in,
   // Weitergabe von Schätzen kann jederzeit frei "gehandelt" werden.
@@ -6142,6 +6170,17 @@ function naechsterFluechtling(room, c) {
 function beendeFluchtphase(room, c) {
   const monsters = c.monsterIds.map(card);
   const gescheitert = (c.fleeFailed || []).map((id) => findPlayer(room, id)).filter(Boolean);
+  // GUMMI-GOLEM ("Zuckerschock"): der Fluch endet, sobald die betroffene
+  // Person einen Kampf verliert - unabhaengig davon, gegen welches Monster.
+  // Muss VOR oeffneVerlustKonsequenz() laufen (weiter unten): sonst wuerde
+  // ein frischer Zuckerschock aus GENAU DIESEM verlorenen Kampf (z.B. gegen
+  // einen zweiten Gummi-Golem) sich selbst sofort wieder loeschen, statt bis
+  // zum NAECHSTEN verlorenen Kampf zu bestehen.
+  gescheitert.forEach((p) => {
+    if (clearActiveCurseByKind(p, 'zuckerschock')) {
+      log(room, `${p.name} verliert den Kampf - der Zuckerschock ist vorbei, Schätze sind wieder erlaubt.`);
+    }
+  });
   discardMonsterIds(room.doorDiscard, c.monsterIds);
   room.combat = null;
   zaubercouchZuruecksetzen(room);
@@ -7117,6 +7156,7 @@ function scheduleBotActionsIfNeeded(room) {
       return;
     }
     if (c.escapeReactionOffer) return; // erst das Kleberflaeschchen-Fenster
+    if (c.trojanerOffer) return; // erst das Trojaner-Fenster beantworten
     // Beim Weglaufen ist nicht zwingend die kaempfende Person dran: jede
     // beteiligte Person laeuft einzeln weg (fleeingId). Ein Bot als Helfer:in
     // muss deshalb hier eingeplant werden, sonst steht die Partie.
@@ -7427,6 +7467,7 @@ io.on('connection', (socket) => {
   onSafe(socket, 'useLamp', ({ cardId, monsterId }) => act(socket, (room, pid) => handleUseLamp(room, pid, cardId, monsterId)));
   onSafe(socket, 'playReactionCard', ({ cardId, value }) => act(socket, (room, pid) => handlePlayReactionCard(room, pid, cardId, value)));
   onSafe(socket, 'passReaction', () => act(socket, (room, pid) => handlePassReaction(room, pid)));
+  onSafe(socket, 'playTrojaner', ({ cardId }) => act(socket, (room, pid) => handlePlayTrojaner(room, pid, cardId)));
   onSafe(socket, 'enchantMonster', () => act(socket, (room, pid) => handleEnchantMonster(room, pid)));
   onSafe(socket, 'thiefBackstab', ({ cardId, targetId }) => act(socket, (room, pid) => handleThiefBackstab(room, pid, cardId, targetId)));
   onSafe(socket, 'thiefSteal', ({ cardId, targetId }) => act(socket, (room, pid) => handleThiefSteal(room, pid, cardId, targetId)));
@@ -7534,16 +7575,17 @@ module.exports = {
   handleProposeTrade, handleCancelTrade, handleRespondTrade, tradableCardIds,
   BIG_ITEMS, isBigItem, bigItemCount, canCarryAnotherBigItem,
   ROLL_REACTION_CARDS, ESCAPE_REACTION_CARDS, reactionHolders, rollWithWindow,
-  handlePlayReactionCard, handlePassReaction, LAMP_CARDS, lampCardIds, handleUseLamp,
+  handlePlayReactionCard, handlePassReaction, loeseReaktionsfensterOhne, LAMP_CARDS, lampCardIds, handleUseLamp,
   fluechtenderId, naechsterFluechtling, beendeFluchtphase,
   handleUseCardPower, DOOR_POWER_CARDS,
   LINGERING_CURSES, addActiveCurse, clearActiveCurseByKind, applyLingeringRule,
   curseCombatModifier, curseSuppressesItemBonuses, curseHidesHandItems, hatHilfeSperre, hatSchatzSperre,
   hatKampfschatzSperre, hatUntotenAngst, cursedItemIds, unequipSlotCard, ownTradeIds,
   clearNextCombatCurses, COMBAT_REACTION_CARDS, TREASURE_REACTION_CARDS, applyCombatReaction, handleAckConsequence, setzeZugphase,
-  zieheSchaetzeFuer, zuckerschockAktiv, besesseneSchaetze, handleResolveConsequenceChoice,
+  zieheSchaetzeFuer, handleResolveConsequenceChoice,
   autoApplyLossConsequence,
   COMBAT_START_OPTIONS, COMBAT_START_COST, STAFF_ITEMS, combatStartOptionRule,
   scheduleBotActionsIfNeeded,
   handleAnswerZaubercouch,
+  handlePlayTrojaner,
 };

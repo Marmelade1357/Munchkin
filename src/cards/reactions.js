@@ -76,9 +76,14 @@ module.exports = () => {
       hinweis: 'Im nächsten Kampf gibt es für dich keinen Schatz.' },
     // GUMMI-GOLEM, Schlimme Dinge: "Zuckerschock! Du musst in JEDEM Kampf
     // deine Hilfe anbieten, darfst keinen Schatz annehmen, bis du einen
-    // verlierst." Angebot und Ende: zuckerschockAktiv in server.js.
+    // verlierst." "einen verlierst" bezieht sich laut Nutzerentscheidung
+    // 2026-09-23 auf einen KAMPF, nicht auf eine Schatzkarte - Ende in
+    // beendeFluchtphase (server.js), Schatzsperre teilt sich hatSchatzSperre()
+    // mit der Stoererliste. Die Hilfe-Pflicht ist Trust-Prinzip (kein Zwang,
+    // jemanden zum Annehmen oder Anbieten zu bringen) - nur der Hinweistext
+    // erinnert daran.
     'GUMMI-GOLEM': { kind: 'zuckerschock', dauer: 'dauerhaft',
-      hinweis: 'Du musst in jedem Kampf Hilfe anbieten und bekommst keinen Schatz, bis du einen verlierst.' },
+      hinweis: 'Zuckerschock: du musst in jedem Kampf deine Hilfe anbieten (niemand muss sie annehmen) und darfst keinen Schatz annehmen, bis du einen Kampf verlierst.' },
     // "Am Ende jedes deiner Zuege wuerfelst du, bevor 'Milde Gabe' verteilt
     // oder abgelegt wird. Dein Rucksack frisst entsprechend des Wurfs so viele
     // zufaellige Karten deiner Hand! Bei einer gewuerfelten 6 verschluckt der

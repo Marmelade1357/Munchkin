@@ -1382,3 +1382,65 @@ Die drei anhaltenden Flüche aus Clerical Errors wurden automatisiert:
 - Die ZAUBERCOUCH wirkt auch unter Amnesie weiter (da sie ein Gegenstand ist, keine Erinnerung).
 - Monster ohne Kampfsieg beenden die Amnesie nicht.
 - Der Verlauf nennt die gefressenen Karten des Hungrigen Rucksacks nicht beim Namen, da Handkarten geheim sind.
+
+**Hinweis 2026-09-23:** Der oben beschriebene Mechanismus (`kind: 'keinAerger'`,
+`aktiveKlassen`/`aktiveRassen`) stammt aus einer separaten Session, deren
+Branch nach diesem Merge einen anderen, gleichzeitig entwickelten
+Mechanismus fuer dieselben drei Flueche vorfand (Welle 2, siehe unten) - per
+Reviewer-Entscheidung wurde Welle 2s Mechanismus behalten
+(`kind: 'keinAergerSuchen'`/`'hungrigerRucksack'`/`'traitsVergessen'`, siehe
+`src/cards/reactions.js`). Dieser Abschnitt beschreibt also nicht mehr den
+tatsaechlichen Code - nachfolgende Sessions sollten `LINGERING_CURSES` direkt
+nachschlagen statt diesem Text zu vertrauen.
+
+## 14. Regellücken: GUMMI-GOLEM (Ueberarbeitung) und TROJANISCHER PFERD
+
+**GUMMI-GOLEM ("Zuckerschock")** war bereits automatisiert (Welle 2), aber
+mit einer anderen Lesart als der Kartentext hergibt: die Schatzsperre endete
+dort, sobald die Anzahl besessener Schatzkarten unter den Stand beim
+Verfluchen fiel (`zuckerschockAktiv`/`besesseneSchaetze`, beim Lesen
+geprueft), und die verfluchte Person konnte selbst eine Anfrage nicht
+ablehnen, wenn sie (von wem auch immer) um Hilfe gebeten wurde.
+Nutzerentscheidung 2026-09-23: "bis du
+einen verlierst" bezieht sich auf einen **Kampf**, nicht auf eine
+Schatzkarte, und "Keiner muss deine Hilfe annehmen" gilt wörtlich (Trust-Prinzip,
+keine erzwungene Annahme). Geaendert:
+- Ende jetzt event-getrieben in `beendeFluchtphase` (`clearActiveCurseByKind`),
+  nicht mehr beim Lesen einer geschrumpften Hand. Reihenfolge wichtig: die
+  Loeschung laeuft VOR `oeffneVerlustKonsequenz`, sonst wuerde ein frischer
+  Zuckerschock aus demselben verlorenen Kampf sich selbst wieder loeschen.
+- `hatSchatzSperre()` prueft direkt `kind === 'zuckerschock'` (gleicher
+  Choke-Point wie die Weihnachtsmann-Stoererliste `noTreasure`).
+- `handleRespondHelp` erzwingt keine Annahme mehr; nur eine Logzeile bei
+  Kampfbeginn erinnert an die Hilfe-Pflicht der verfluchten Person selbst.
+- `zuckerschockAktiv`/`besesseneSchaetze` sowie das `schatzStand`-Feld
+  wurden entfernt (nur fuer diese Karte gebraucht).
+
+**TROJANISCHER PFERD** (Unnatural Axe, treasure_other) war ein
+halbfertiges Reaktionsfenster (`combat.trojanerOffer`, seit einem frueheren
+Commit, aber nie zu Ende gefuehrt): jetzt vollstaendig.
+- Nach einem Kampfsieg (`resolveCombatWin`) oeffnet sich ein Fenster fuer
+  alle, die die Karte auf der Hand halten (`reactionHolders`,
+  `TREASURE_REACTION_CARDS`).
+- Spielen (`handlePlayTrojaner`) entfernt die Karte und oeffnet den
+  vorhandenen generischen Kartenwahl-Dialog (`openCardChoice`, gleiches
+  Muster wie WANDERNDES MONSTER/ILLUSION) mit "ohne Monster" plus einer
+  Option je Handmonster - keine eigene Client-UI fuer die Monsterwahl noetig.
+- Zwei neue Faelle in `applyCombatPotionAction`
+  (`trojanerOhneMonster`/`trojanerMitMonster`) blockieren die GESAMTE
+  Kampfbeute (`finishCombatWin` liest `c.trojanerNoTreasure`) und starten bei
+  einem gewaehlten Monster einen neuen Kampf (`startCombat`), ausser das
+  Spiel ist durch den ersten Kampf schon gewonnen (`!room.winner`).
+- Absagen/Verbindungsabbruch/Bots: `handlePassReaction`,
+  `loeseReaktionsfensterOhne` und `scheduleBotActionsIfNeeded` behandeln
+  `trojanerOffer` wie das bestehende Kleberflaeschchen-Fenster.
+
+**Zusaetzlich behoben:** "Kampf auswerten" liess sich waehrend eines offenen
+oder gerade aufgeloesten Trojaner-Fensters erneut druecken und zog dann die
+Kampfbeute normal ein, obwohl gerade noch ein Trojanisches Pferd gespielt
+wurde/wird - `handleEvaluateCombat` sperrt das jetzt
+(`trojanerOffer`/`trojanerDone`), der Client blendet den Knopf entsprechend aus.
+
+**Bewusst offen:** PIÑATA und TROJANISCHER PFERD im selben Kampf bleiben
+unberuecksichtigt (PIÑATA zieht weiterhin fuer alle, unabhaengig von der
+Trojaner-Blockade) - seltener Kombinationsfall.
